@@ -53,7 +53,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import chalk from "chalk";
-import { spawn } from "child_process";
+import { execSync, spawn } from "child_process";
 import {
 	APP_NAME,
 	APP_TITLE,
@@ -6928,9 +6928,6 @@ export class InteractiveMode {
 		const cwd = this.sessionManager.getCwd();
 		
 		try {
-			// Use ripgrep if available, otherwise fall back to grep
-			const { execSync } = await import("child_process");
-			
 			let output: string;
 			try {
 				// Try ripgrep first (faster and respects .gitignore by default)
