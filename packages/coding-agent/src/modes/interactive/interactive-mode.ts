@@ -3227,6 +3227,11 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
+			if (text === "/todos") {
+				await this.handleTodosCommand();
+				this.editor.setText("");
+				return;
+			}
 			if (text === "/fork") {
 				this.showUserMessageSelector();
 				this.editor.setText("");
@@ -6917,6 +6922,74 @@ export class InteractiveMode {
 		this.chatContainer.addChild(new Markdown(hotkeys.trim(), 1, 1, this.getMarkdownThemeWithSettings()));
 		this.chatContainer.addChild(new DynamicBorder());
 		this.ui.requestRender();
+	}
+
+	private async handleTodosCommand(): Promise<void> {
+		const cwd = this.sessionManager.getCwd();
+		
+		try {
+			// Use ripgrep if available, otherwise fall back to grep
+			const { execSync } = await import("child_process");
+			
+			let output: string;
+			try {
+				// Try ripgrep first (faster and respects .gitignore by default)
+				output = execSync(
+					'rg --no-heading --line-number --color never "TODO|FIXME|XXX|HACK|NOTE" || true',
+					{ cwd, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 }
+				);
+			} catch {
+				// Fall back to grep
+				try {
+					output = execSync(
+						'grep -rn --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist --exclude-dir=build "TODO\\|FIXME\\|XXX\\|HACK\\|NOTE" . || true',
+						{ cwd, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 }
+					);
+				} catch {
+					this.showError("Failed to search for TODOs. Install ripgrep or grep.");
+					return;
+				}
+			}
+
+			const lines = output.trim().split("\n").filter(line => line.length > 0);
+			
+			if (lines.length === 0) {
+				this.chatContainer.addChild(new Spacer(1));
+				this.chatContainer.addChild(new DynamicBorder());
+				this.chatContainer.addChild(new ThemedText(() => theme.bold(theme.fg("accent", "TODOs")), 1, 0));
+				this.chatContainer.addChild(new Spacer(1));
+				this.chatContainer.addChild(new ThemedText(() => theme.fg("dim", "No TODOs found in the codebase."), 1, 1));
+				this.chatContainer.addChild(new DynamicBorder());
+				this.ui.requestRender();
+				return;
+			}
+
+			// Format the output as markdown
+			let markdown = `Found ${lines.length} TODO${lines.length === 1 ? "" : "s"}:\n\n`;
+			
+			for (const line of lines) {
+				// Parse the line format: filename:linenum:content
+				const match = line.match(/^([^:]+):(\d+):(.+)$/);
+				if (match) {
+					const [, file, lineNum, content] = match;
+					const relativePath = getCwdRelativePath(cwd, path.resolve(cwd, file));
+					markdown += `- \`${relativePath}:${lineNum}\` ${content.trim()}\n`;
+				} else {
+					// Fallback for unexpected format
+					markdown += `- ${line}\n`;
+				}
+			}
+
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new DynamicBorder());
+			this.chatContainer.addChild(new ThemedText(() => theme.bold(theme.fg("accent", "TODOs")), 1, 0));
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Markdown(markdown.trim(), 1, 1, this.getMarkdownThemeWithSettings()));
+			this.chatContainer.addChild(new DynamicBorder());
+			this.ui.requestRender();
+		} catch (error: unknown) {
+			this.showError(`Failed to search for TODOs: ${error instanceof Error ? error.message : String(error)}`);
+		}
 	}
 
 	private async handleClearCommand(): Promise<void> {
