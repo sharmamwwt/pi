@@ -78,6 +78,7 @@ import {
 import { formatCacheWarmingStatus, formatCacheWarmingUsage } from "../../core/cache-warmer.ts";
 import { findExtensionStackMatches, recordCrash, takeUnnotifiedCrash } from "../../core/crash-log.ts";
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "../../core/defaults.ts";
+import { execCommand } from "../../core/exec.ts";
 import type {
 	AutocompleteProviderFactory,
 	EditorFactory,
@@ -3224,6 +3225,11 @@ export class InteractiveMode {
 			}
 			if (text === "/hotkeys") {
 				this.handleHotkeysCommand();
+				this.editor.setText("");
+				return;
+			}
+			if (text === "/todo") {
+				await this.handleTodoCommand();
 				this.editor.setText("");
 				return;
 			}
@@ -6915,6 +6921,58 @@ export class InteractiveMode {
 		this.chatContainer.addChild(new ThemedText(() => theme.bold(theme.fg("accent", "Keyboard Shortcuts")), 1, 0));
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Markdown(hotkeys.trim(), 1, 1, this.getMarkdownThemeWithSettings()));
+		this.chatContainer.addChild(new DynamicBorder());
+		this.ui.requestRender();
+	}
+
+	private async handleTodoCommand(): Promise<void> {
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new DynamicBorder());
+		this.chatContainer.addChild(new ThemedText(() => theme.bold(theme.fg("accent", "Outstanding TODOs")), 1, 0));
+		this.chatContainer.addChild(new Spacer(1));
+
+		try {
+			// Use grep to find TODO, FIXME, XXX comments in the codebase
+			// Exclude common directories that shouldn't be searched
+			const result = await execCommand(
+				"grep",
+				[
+					"-rn",
+					"-E",
+					"TODO|FIXME|XXX",
+					"--exclude-dir=node_modules",
+					"--exclude-dir=.git",
+					"--exclude-dir=dist",
+					"--exclude-dir=build",
+					"--exclude-dir=coverage",
+					"--exclude=*.lock",
+					"--exclude=package-lock.json",
+					".",
+				],
+				this.session.cwd,
+				{ timeout: 10000 },
+			);
+
+			if (result.code === 0 && result.stdout.trim()) {
+				// Format the output as a markdown code block
+				const todoList = result.stdout.trim();
+				const markdown = `\`\`\`\n${todoList}\n\`\`\``;
+				this.chatContainer.addChild(new Markdown(markdown, 1, 1, this.getMarkdownThemeWithSettings()));
+			} else if (result.code === 1) {
+				// grep returns 1 when no matches found
+				this.chatContainer.addChild(
+					new ThemedText(() => theme.fg("success", "No TODOs found in the codebase!"), 1, 1),
+				);
+			} else {
+				// Other error
+				const errorMsg = result.stderr.trim() || "Failed to search for TODOs";
+				this.chatContainer.addChild(new ThemedText(() => theme.fg("error", errorMsg), 1, 1));
+			}
+		} catch (error: unknown) {
+			const errorMsg = error instanceof Error ? error.message : "Unknown error searching for TODOs";
+			this.chatContainer.addChild(new ThemedText(() => theme.fg("error", errorMsg), 1, 1));
+		}
+
 		this.chatContainer.addChild(new DynamicBorder());
 		this.ui.requestRender();
 	}
