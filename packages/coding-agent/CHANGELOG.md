@@ -5,6 +5,7 @@
 ### Added
 
 - Device-code login (for example GitHub Copilot) now opens the verification page and copies the code when you press Enter. Providers can turn either action off with `openBrowserOnConfirm: false` or `copyCodeOnConfirm: false` ([#9282](https://github.com/earendil-works/pi/issues/9282), [#9301](https://github.com/earendil-works/pi/pull/9301))
+- Added `/todo` slash command to search for TODO, FIXME, and XXX comments in the codebase
 
 ### Changed
 
