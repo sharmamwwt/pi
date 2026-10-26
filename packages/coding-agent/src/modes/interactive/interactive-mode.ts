@@ -3294,6 +3294,11 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
+			if (text === "/todo") {
+				this.editor.setText("");
+				await this.handleTodoCommand();
+				return;
+			}
 			if (text === "/quit") {
 				this.editor.setText("");
 				await this.shutdown();
@@ -7081,6 +7086,116 @@ export class InteractiveMode {
 		} catch {
 			// Ignore, will be emitted as an event
 		}
+	}
+
+	private async handleTodoCommand(): Promise<void> {
+		this.clearStatusIndicator();
+
+		try {
+			const rgPath = await ensureTool("rg");
+			if (!rgPath) {
+				this.showError("ripgrep (rg) is not available and could not be downloaded");
+				return;
+			}
+
+			const cwd = this.session.getCwd();
+			const MAX_RESULTS = 50;
+
+			// Search for TODO comments using ripgrep
+			// --no-config: don't use user config
+			// --json: output in JSON format for easier parsing
+			// --line-number: include line numbers
+			// --color=never: no color codes
+			// --hidden: include hidden files
+			// --ignore-case: case-insensitive search
+			// --max-count: limit results per file
+			const args = [
+				"--no-config",
+				"--json",
+				"--line-number",
+				"--color=never",
+				"--hidden",
+				"--ignore-case",
+				"--max-count",
+				String(MAX_RESULTS),
+				"--",
+				"TODO",
+				cwd,
+			];
+
+			const child = spawn(rgPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+			let stdout = "";
+			let stderr = "";
+
+			child.stdout.on("data", (chunk) => {
+				stdout += chunk.toString();
+			});
+
+			child.stderr.on("data", (chunk) => {
+				stderr += chunk.toString();
+			});
+
+			await new Promise<void>((resolve, reject) => {
+				child.on("close", (code) => {
+					// ripgrep returns 0 if matches found, 1 if no matches, 2+ for errors
+					if (code !== null && code > 1) {
+						reject(new Error(`ripgrep failed with code ${code}: ${stderr}`));
+					} else {
+						resolve();
+					}
+				});
+
+				child.on("error", (error) => {
+					reject(error);
+				});
+			});
+
+			// Parse JSON output
+			const lines = stdout.trim().split("\n").filter((line) => line);
+			const matches: Array<{ path: string; line: number; text: string }> = [];
+
+			for (const line of lines) {
+				try {
+					const parsed = JSON.parse(line);
+					if (parsed.type === "match") {
+						const relativePath = path.relative(cwd, parsed.data.path.text);
+						matches.push({
+							path: relativePath || parsed.data.path.text,
+							line: parsed.data.line_number,
+							text: parsed.data.lines.text.trim(),
+						});
+					}
+				} catch {
+					// Skip invalid JSON lines
+				}
+			}
+
+			// Cap at 50 results
+			const cappedMatches = matches.slice(0, MAX_RESULTS);
+			const truncated = matches.length > MAX_RESULTS;
+
+			if (cappedMatches.length === 0) {
+				this.showInfo("No TODO comments found in the repository");
+			} else {
+				let output = `Found ${cappedMatches.length} TODO comment${cappedMatches.length === 1 ? "" : "s"}`;
+				if (truncated) {
+					output += ` (capped at ${MAX_RESULTS})`;
+				}
+				output += ":\n\n";
+
+				for (const match of cappedMatches) {
+					output += `${match.path}:${match.line}: ${match.text}\n`;
+				}
+
+				// Add the output as a custom message to the chat
+				const customMessage = createCustomMessage(output);
+				this.session.addCustomMessage(customMessage);
+			}
+		} catch (error) {
+			this.showError(`Failed to search for TODO comments: ${error instanceof Error ? error.message : "Unknown error"}`);
+		}
+
+		this.ui.requestRender();
 	}
 
 	stop(fullscreenExitOutput = this.settingsManager.getFullscreenExitOutput()): void {
