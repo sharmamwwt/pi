@@ -3227,6 +3227,11 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
+			if (text === "/todos") {
+				await this.handleTodosCommand();
+				this.editor.setText("");
+				return;
+			}
 			if (text === "/fork") {
 				this.showUserMessageSelector();
 				this.editor.setText("");
@@ -6915,6 +6920,107 @@ export class InteractiveMode {
 		this.chatContainer.addChild(new ThemedText(() => theme.bold(theme.fg("accent", "Keyboard Shortcuts")), 1, 0));
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Markdown(hotkeys.trim(), 1, 1, this.getMarkdownThemeWithSettings()));
+		this.chatContainer.addChild(new DynamicBorder());
+		this.ui.requestRender();
+	}
+
+	private async handleTodosCommand(): Promise<void> {
+		const { ensureTool } = await import("../../utils/tools-manager.ts");
+		const rgPath = await ensureTool("rg");
+		if (!rgPath) {
+			this.showStatus("ripgrep (rg) not found. Install it to use /todos.");
+			return;
+		}
+
+		// Search for TODO, FIXME, XXX, HACK, NOTE comments
+		const patterns = ["TODO", "FIXME", "XXX", "HACK", "NOTE"];
+		const args = [
+			"--no-config",
+			"--line-number",
+			"--color=never",
+			"--hidden",
+			"--no-heading",
+			"--with-filename",
+			"-e",
+			patterns.join("|"),
+			".",
+		];
+
+		const { spawn } = await import("child_process");
+		const child = spawn(rgPath, args, { stdio: ["ignore", "pipe", "pipe"], cwd: this.cwd });
+
+		let stdout = "";
+		let stderr = "";
+
+		child.stdout?.on("data", (chunk) => {
+			stdout += chunk.toString();
+		});
+
+		child.stderr?.on("data", (chunk) => {
+			stderr += chunk.toString();
+		});
+
+		await new Promise<void>((resolve) => {
+			child.on("close", () => resolve());
+		});
+
+		if (stderr && !stdout) {
+			this.showStatus(`Error searching for TODOs: ${stderr.trim()}`);
+			return;
+		}
+
+		const lines = stdout.trim().split("\n").filter((line) => line.length > 0);
+
+		if (lines.length === 0) {
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new DynamicBorder());
+			this.chatContainer.addChild(new ThemedText(() => theme.bold(theme.fg("accent", "TODOs")), 1, 0));
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new ThemedText(() => "No TODOs found in the codebase.", 1, 0));
+			this.chatContainer.addChild(new DynamicBorder());
+			this.ui.requestRender();
+			return;
+		}
+
+		// Group by file
+		const todosByFile = new Map<string, Array<{ line: number; text: string }>>();
+		for (const line of lines) {
+			const match = line.match(/^([^:]+):(\d+):(.*)$/);
+			if (match) {
+				const [, file, lineNum, text] = match;
+				if (!todosByFile.has(file)) {
+					todosByFile.set(file, []);
+				}
+				todosByFile.get(file)!.push({ line: Number.parseInt(lineNum, 10), text: text.trim() });
+			}
+		}
+
+		// Build markdown output
+		let markdown = "";
+		const sortedFiles = Array.from(todosByFile.keys()).sort();
+		for (const file of sortedFiles) {
+			const todos = todosByFile.get(file)!;
+			markdown += `**${file}**\n\n`;
+			for (const todo of todos) {
+				markdown += `- Line ${todo.line}: ${todo.text}\n`;
+			}
+			markdown += "\n";
+		}
+
+		const totalCount = lines.length;
+		const fileCount = todosByFile.size;
+
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new DynamicBorder());
+		this.chatContainer.addChild(
+			new ThemedText(
+				() => theme.bold(theme.fg("accent", `TODOs (${totalCount} in ${fileCount} ${fileCount === 1 ? "file" : "files"})`)),
+				1,
+				0,
+			),
+		);
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Markdown(markdown.trim(), 1, 1, this.getMarkdownThemeWithSettings()));
 		this.chatContainer.addChild(new DynamicBorder());
 		this.ui.requestRender();
 	}
